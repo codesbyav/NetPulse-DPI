@@ -2,6 +2,7 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
 
 namespace DPI {
 
@@ -47,27 +48,26 @@ void FastPathProcessor::stop() {
 }
 
 void FastPathProcessor::run() {
-    while (running_) {
-        // Get packet from input queue
+    while (true) {
         auto job_opt = input_queue_.popWithTimeout(std::chrono::milliseconds(100));
-        
+
         if (!job_opt) {
-            // Periodically cleanup stale connections
+            if (input_queue_.isShutdown() && input_queue_.empty()) {
+                break;
+            }
+
             conn_tracker_.cleanupStale(std::chrono::seconds(300));
             continue;
         }
-        
+
         packets_processed_++;
-        
-        // Process the packet
+
         PacketAction action = processPacket(*job_opt);
-        
-        // Call output callback
+
         if (output_callback_) {
             output_callback_(*job_opt, action);
         }
-        
-        // Update stats
+
         if (action == PacketAction::DROP) {
             packets_dropped_++;
         } else {
@@ -81,7 +81,8 @@ PacketAction FastPathProcessor::processPacket(PacketJob& job) {
     Connection* conn = conn_tracker_.getOrCreateConnection(job.tuple);
     if (!conn) {
         // Should not happen, but handle gracefully
-        return PacketAction::FORWARD;
+        
+        return checkRules(job, conn);
     }
     
     // Update connection stats
@@ -104,7 +105,8 @@ PacketAction FastPathProcessor::processPacket(PacketJob& job) {
     }
     
     // Check rules (even for classified connections, as rules might change)
-    return checkRules(job, conn);
+    
+    return PacketAction::FORWARD;
 }
 
 void FastPathProcessor::inspectPayload(PacketJob& job, Connection* conn) {

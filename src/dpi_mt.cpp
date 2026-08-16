@@ -363,11 +363,11 @@ public:
         
         std::cout << "\n";
         std::cout << "╔══════════════════════════════════════════════════════════════╗\n";
-        std::cout << "║              DPI ENGINE v2.0 (Multi-threaded)                 ║\n";
+        std::cout << "║              NetPulse-DPI  v2.0 (Multi-threaded)             ║\n";
         std::cout << "╠══════════════════════════════════════════════════════════════╣\n";
         std::cout << "║ Load Balancers: " << std::setw(2) << cfg.num_lbs 
                   << "    FPs per LB: " << std::setw(2) << cfg.fps_per_lb
-                  << "    Total FPs: " << std::setw(2) << total_fps << "     ║\n";
+                  << "    Total FPs: " << std::setw(2) << total_fps << "             ║\n";
         std::cout << "╚══════════════════════════════════════════════════════════════╝\n\n";
         
         // Create FP threads

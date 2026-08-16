@@ -35,34 +35,46 @@ void LoadBalancer::start() {
 
 void LoadBalancer::stop() {
     if (!running_) return;
-    
-    running_ = false;
+
+    std::cout << "[LB" << lb_id_ << "] Stopping...\n";
+
+    // Tell the worker no more packets will arrive.
     input_queue_.shutdown();
-    
+
+    // Wait for the worker to drain the queue and exit.
     if (thread_.joinable()) {
         thread_.join();
     }
-    
+
+    running_ = false;
+
     std::cout << "[LB" << lb_id_ << "] Stopped\n";
 }
 
 void LoadBalancer::run() {
-    while (running_) {
-        // Get packet from input queue (with timeout to check running flag)
-        auto job_opt = input_queue_.popWithTimeout(std::chrono::milliseconds(100));
-        
+    while (true) {
+        auto job_opt =
+            input_queue_.popWithTimeout(std::chrono::milliseconds(100));
+
         if (!job_opt) {
-            continue;  // Timeout or shutdown
-        }
-        
+    std::cout << "[LB" << lb_id_
+              << "] No packet. shutdown=" << input_queue_.isShutdown()
+              << " empty=" << input_queue_.empty() << "\n";
+
+    if (input_queue_.isShutdown() && input_queue_.empty()) {
+        std::cout << "[LB" << lb_id_ << "] Exiting run()\n";
+        break;
+    }
+
+    continue;
+}
+
         packets_received_++;
-        
-        // Select target FP based on five-tuple hash
+
         int fp_index = selectFP(job_opt->tuple);
-        
-        // Push to selected FP's queue
+
         fp_queues_[fp_index]->push(std::move(*job_opt));
-        
+
         packets_dispatched_++;
         per_fp_counts_[fp_index]++;
     }

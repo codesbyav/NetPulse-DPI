@@ -10,6 +10,9 @@
 #include <optional>
 #include <vector>
 #include <fstream>
+#ifdef DOMAIN
+#undef DOMAIN
+#endif
 
 namespace DPI {
 

@@ -85,25 +85,33 @@ void DPIEngine::start() {
 
 void DPIEngine::stop() {
     if (!running_) return;
-    
-    running_ = false;
-    
-    // Stop LB threads first (they feed FPs)
+
+    std::cout << "[STOP] Starting stop\n";
+
     if (lb_manager_) {
+        std::cout << "[STOP] Stopping LBs...\n";
         lb_manager_->stopAll();
+        std::cout << "[STOP] LBs stopped\n";
     }
-    
-    // Stop FP threads
+
     if (fp_manager_) {
+        std::cout << "[STOP] Stopping FPs...\n";
         fp_manager_->stopAll();
+        std::cout << "[STOP] FPs stopped\n";
     }
-    
-    // Stop output thread
-    output_queue_.shutdown();
+
+    running_ = false;
+
+    std::cout << "[STOP] Joining output...\n";
+
     if (output_thread_.joinable()) {
         output_thread_.join();
     }
-    
+
+    std::cout << "[STOP] Output stopped\n";
+
+    output_queue_.shutdown();
+
     std::cout << "[DPIEngine] All threads stopped\n";
 }
 
@@ -119,54 +127,66 @@ void DPIEngine::waitForCompletion() {
     // Signal completion
     processing_complete_ = true;
 }
-
 bool DPIEngine::processFile(const std::string& input_file,
                             const std::string& output_file) {
-    
+
     std::cout << "\n[DPIEngine] Processing: " << input_file << "\n";
     std::cout << "[DPIEngine] Output to:  " << output_file << "\n\n";
-    
-    // Initialize if not already done
+
     if (!rule_manager_) {
         if (!initialize()) {
             return false;
         }
     }
-    
-    // Open output file
-    output_file_.open(output_file, std::ios::binary);
+
+    output_file_.open(output_file, std::ios::binary | std::ios::trunc);
+
     if (!output_file_.is_open()) {
         std::cerr << "[DPIEngine] Error: Cannot open output file\n";
         return false;
     }
-    
-    // Start processing threads
+
     start();
-    
-    // Start reader thread
-    reader_thread_ = std::thread(&DPIEngine::readerThreadFunc, this, input_file);
-    
-    // Wait for completion
-    waitForCompletion();
-    
-    // Give some time for final packets to process
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    
-    // Stop all threads
-    stop();
-    
-    // Close output file
-    if (output_file_.is_open()) {
-        output_file_.close();
+
+    reader_thread_ =
+        std::thread(&DPIEngine::readerThreadFunc, this, input_file);
+
+    if (reader_thread_.joinable()) {
+        reader_thread_.join();
     }
-    
-    // Print final report
+
+    std::cout << "[DPIEngine] Reader finished. Draining pipeline...\n";
+
+    // Wait for all packets to finish processing
+    waitForCompletion();
+
+    // Stop all workers cleanly
+    stop();
+
+    {
+        std::lock_guard<std::mutex> lock(output_mutex_);
+
+        if (output_file_.is_open()) {
+            output_file_.flush();
+            output_file_.close();
+        }
+    }
+
+    processing_complete_ = true;
+
     std::cout << generateReport();
-    std::cout << fp_manager_->generateClassificationReport();
-    
+
+    if (fp_manager_) {
+        std::cout << fp_manager_->generateClassificationReport();
+    }
+
+    std::cout << "\n[DPIEngine] Processing complete!\n";
+    std::cout << "[DPIEngine] Output written to: "
+              << output_file << "\n";
+
     return true;
 }
-
+    
 void DPIEngine::readerThreadFunc(const std::string& input_file) {
     PacketAnalyzer::PcapReader reader;
     
@@ -176,7 +196,11 @@ void DPIEngine::readerThreadFunc(const std::string& input_file) {
     }
     
     // Write PCAP header to output
-    writeOutputHeader(reader.getGlobalHeader());
+    if (!writeOutputHeader(reader.getGlobalHeader())) {
+    std::cerr << "[Reader] ERROR: Failed to write PCAP header\n";
+} else {
+    std::cout << "[Reader] PCAP header written successfully\n";
+}
     
     PacketAnalyzer::RawPacket raw;
     PacketAnalyzer::ParsedPacket parsed;
@@ -210,7 +234,11 @@ void DPIEngine::readerThreadFunc(const std::string& input_file) {
         
         // Send to appropriate LB based on hash
         LoadBalancer& lb = lb_manager_->getLBForPacket(job.tuple);
-        lb.getInputQueue().push(std::move(job));
+
+std::cout << "[Reader] Sending packet #" << packet_id
+          << " to LB" << lb.getId() << "\n";
+
+lb.getInputQueue().push(std::move(job));
     }
     
     std::cout << "[Reader] Finished reading " << packet_id << " packets\n";
@@ -301,6 +329,7 @@ void DPIEngine::handleOutput(const PacketJob& job, PacketAction action) {
     
     stats_.forwarded_packets++;
     output_queue_.push(job);
+    std::cout << "[Output] Forwarded packet #" << job.packet_id << "\n";
 }
 
 bool DPIEngine::writeOutputHeader(const PacketAnalyzer::PcapGlobalHeader& header) {
@@ -326,6 +355,7 @@ void DPIEngine::writeOutputPacket(const PacketJob& job) {
     
     output_file_.write(reinterpret_cast<const char*>(&pkt_header), sizeof(pkt_header));
     output_file_.write(reinterpret_cast<const char*>(job.data.data()), job.data.size());
+    output_file_.flush();
 }
 
 // ============================================================================
