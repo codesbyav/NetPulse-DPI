@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07111f" />
+    <title>NetPulse DPI Console</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="NetPulse overview">
+          <span class="brand-mark"><i></i><i></i><i></i></span>
+          <span>NETPULSE<em>DPI</em></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a class="nav-link active" href="#overview"><span>◈</span>Overview</a>
+          <a class="nav-link" href="#traffic"><span>⌁</span>Traffic</a>
+          <a class="nav-link" href="#rules"><span>⊘</span>Rules</a>
+          <a class="nav-link" href="#reports"><span>▤</span>Reports</a>
+        </nav>
+        <div class="engine-card">
+          <div class="engine-pulse"></div>
+          <div><small>ENGINE STATUS</small><strong id="engine-state">Ready</strong></div>
+          <p>Offline PCAP analysis<br />2 LBs · 4 fast paths</p>
+        </div>
+        <div class="sidebar-footer">v0.1 · Local workspace</div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div class="crumb"><span>WORKSPACE</span><b>/</b> Default inspection</div>
+          <div class="top-actions">
+            <span class="clock" id="clock"></span>
+            <button class="icon-button" aria-label="Notifications">◌</button>
+            <div class="avatar">NP</div>
+          </div>
+        </header>
+
+        <section id="overview" class="hero">
+          <div>
+            <p class="eyebrow">NETWORK VISIBILITY</p>
+            <h1>Inspect. Classify. <span>Control.</span></h1>
+            <p class="subcopy">Process packet captures, discover application traffic, and apply filtering rules from one operational console.</p>
+          </div>
+          <div class="scan-state"><span class="status-dot"></span><b id="scan-label">Awaiting capture</b><small id="scan-detail">No PCAP loaded</small><a id="output-link" hidden>Download filtered PCAP</a></div>
+        </section>
+
+        <section class="capture-panel" aria-labelledby="capture-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">INPUT</p><h2 id="capture-title">Run an inspection</h2></div>
+            <span class="file-status" id="file-status">Select a PCAP to inspect</span>
+          </div>
+          <div class="capture-grid">
+            <label class="drop-zone" for="pcap-file">
+              <input id="pcap-file" type="file" accept=".pcap,.pcapng" />
+              <span class="upload-icon">↑</span>
+              <strong id="file-name">Drop a capture here or browse</strong>
+              <small>PCAP or PCAPNG · processed locally</small>
+            </label>
+            <div class="run-options">
+              <label>Output file<input id="output-file" value="filtered-output.pcap" /></label>
+              <div class="thread-options">
+                <label>Load balancers<select id="lb-count"><option>1</option><option selected>2</option><option>4</option></select></label>
+                <label>Fast paths / LB<select id="fp-count"><option>1</option><option selected>2</option><option>4</option></select></label>
+              </div>
+              <button id="run-button" class="primary-button"><span>▶</span> Start inspection</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="metrics-grid" aria-label="Inspection metrics">
+          <article class="metric-card"><p>Total packets</p><strong id="packet-count">0</strong><span id="packet-change">Ready to analyze</span></article>
+          <article class="metric-card"><p>Throughput</p><strong id="throughput">0 <small>Mb/s</small></strong><span id="throughput-change">No active stream</span></article>
+          <article class="metric-card"><p>Classified flows</p><strong id="flow-count">0</strong><span id="flow-change">—</span></article>
+          <article class="metric-card danger"><p>Blocked packets</p><strong id="blocked-count">0</strong><span id="blocked-change">No rules matched</span></article>
+        </section>
+
+        <section id="traffic" class="dashboard-grid">
+          <article class="panel traffic-panel">
+            <div class="panel-heading"><div><p class="eyebrow">LIVE TELEMETRY</p><h2>Traffic throughput</h2></div><span class="legend"><i></i> Packets / second</span></div>
+            <div class="chart-wrap"><svg id="traffic-chart" viewBox="0 0 720 220" role="img" aria-label="Traffic throughput line chart"></svg></div>
+            <div class="chart-labels"><span>10:21</span><span>10:22</span><span>10:23</span><span>10:24</span><span>10:25</span><span>Now</span></div>
+          </article>
+          <article class="panel distribution-panel">
+            <div class="panel-heading"><div><p class="eyebrow">CLASSIFICATION</p><h2>Application traffic</h2></div><button class="text-button" id="refresh-traffic">Refresh</button></div>
+            <div class="donut-layout">
+              <div class="donut" id="donut"><div><strong id="classified-percent">0%</strong><span>classified</span></div></div>
+              <ul class="app-legend" id="app-legend"></ul>
+            </div>
+          </article>
+        </section>
+
+        <section id="rules" class="rules-layout">
+          <article class="panel rules-panel">
+            <div class="panel-heading"><div><p class="eyebrow">POLICY</p><h2>Blocking rules</h2></div><span class="rule-total" id="rule-total">0 active</span></div>
+            <form id="rule-form" class="rule-form">
+              <select id="rule-type" aria-label="Rule type"><option value="domain">Domain</option><option value="ip">Source IP</option><option value="app">Application</option></select>
+              <input id="rule-value" aria-label="Rule value" placeholder="e.g. youtube.com" required />
+              <button class="secondary-button" type="submit">Add rule</button>
+            </form>
+            <div class="rule-list" id="rule-list"></div>
+          </article>
+          <article id="reports" class="panel event-panel">
+            <div class="panel-heading"><div><p class="eyebrow">ACTIVITY</p><h2>Latest events</h2></div><span class="live-badge"><i></i> LIVE</span></div>
+            <ol id="event-list" class="event-list"></ol>
+          </article>
+        </section>
+      </main>
+    </div>
+    <template id="rule-template"><div class="rule"><span class="rule-kind"></span><span class="rule-value"></span><button aria-label="Remove rule">×</button></div></template>
+    <script src="app.js"></script>
+  </body>
+</html>
