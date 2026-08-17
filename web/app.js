@@ -10,7 +10,7 @@ let startedAt = 0;
 
 const $ = (id) => document.getElementById(id);
 const formatNumber = (value) => new Intl.NumberFormat().format(Math.round(value || 0));
-const escapeHtml = (value) => String(value).replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
+const escapeHtml = (value) => String(value).replace(/[&<>\"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
 const palette = ["#51e6d5", "#48a9ff", "#8f7dff", "#ffbf69", "#ff6b8a", "#79d36f", "#b98cff", "#6fd8ff"];
 
 function setEngineState(state, detail, status = "idle") {
@@ -21,25 +21,25 @@ function setEngineState(state, detail, status = "idle") {
   $("scan-detail").textContent = detail;
 }
 
-function renderChart(points = []) {
+function renderChart(points = [], label = "Average throughput") {
   const svg = $("traffic-chart");
   if (!points.length) {
     svg.innerHTML = "<text x='360' y='108' text-anchor='middle' fill='#71899f' font-size='13'>Throughput data appears after an inspection</text>";
     return;
   }
-  const width = 720, height = 220, pad = 8, max = Math.max(...points, 1) * 1.12;
+  const width = 720, height = 220, pad = 8, max = Math.max(...points, 0.01) * 1.12;
   const coords = points.map((value, index) => [(index / Math.max(points.length - 1, 1) * width).toFixed(1), (height - pad - value / max * (height - pad * 2)).toFixed(1)]);
   const line = coords.map((point) => point.join(",")).join(" ");
   const area = `M ${coords[0].join(" ")} L ${coords.map((point) => point.join(" ")).join(" L ")} L ${width} ${height} L 0 ${height} Z`;
   const last = coords.at(-1);
-  svg.innerHTML = `<defs><linearGradient id="chart-gradient" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#51e6d5" stop-opacity=".30"/><stop offset="1" stop-color="#51e6d5" stop-opacity="0"/></linearGradient></defs><path class="chart-fill" d="${area}"/><polyline class="chart-line" points="${line}"/><circle class="chart-dot" cx="${last[0]}" cy="${last[1]}" r="5"/>`;
+  svg.innerHTML = `<defs><linearGradient id="chart-gradient" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#51e6d5" stop-opacity=".30"/><stop offset="1" stop-color="#51e6d5" stop-opacity="0"/></linearGradient></defs><path class="chart-fill" d="${area}"/><polyline class="chart-line" points="${line}"/><circle class="chart-dot" cx="${last[0]}" cy="${last[1]}" r="5"/><text x="12" y="20" fill="#71899f" font-size="11">${escapeHtml(label)}</text>`;
 }
 
 function renderApps() {
   const total = apps.reduce((sum, app) => sum + app.count, 0);
   const normalized = total ? apps : [{ name: "No data", count: 0, percent: 100, color: "#2b4056" }];
-  $("app-legend").innerHTML = normalized.slice(0, 8).map((app, index) => `<li><i style="background:${app.color || palette[index % palette.length]}"></i><span>${escapeHtml(app.name)}</span><b>${app.percent.toFixed(1)}%</b></li>`).join("");
-  const classified = apps.filter((app) => app.name.toLowerCase() !== "unknown").reduce((sum, app) => sum + app.count, 0);
+  $("app-legend").innerHTML = normalized.slice(0, 8).map((app, index) => `<li><i style="background:${app.color || palette[index % palette.length]}"></i><span>${escapeHtml(app.name.replace(/^\|+\s*/, ""))}</span><b>${app.percent.toFixed(1)}%</b></li>`).join("");
+  const classified = apps.filter((app) => app.name.replace(/^\|+\s*/, "").toLowerCase() !== "unknown").reduce((sum, app) => sum + app.count, 0);
   $("classified-percent").textContent = `${total ? Math.round(classified / total * 100) : 0}%`;
   let position = 0;
   const segments = normalized.map((app, index) => { const start = position; position += app.percent; return `${app.color || palette[index % palette.length]} ${start}% ${position}%`; });
@@ -65,7 +65,7 @@ function renderEvents(events) {
 function renderStats(stats, status) {
   const elapsed = Math.max((Date.now() - startedAt) / 1000, 1);
   const total = stats.total_packets || 0;
-  const mbps = status === "running" ? ((stats.total_bytes || 0) * 8 / elapsed / 1_000_000) : (stats.total_bytes ? (stats.total_bytes * 8 / Math.max(elapsed, 1) / 1_000_000) : 0);
+  const mbps = stats.total_bytes ? (stats.total_bytes * 8 / Math.max(elapsed, 1) / 1_000_000) : 0;
   $("packet-count").textContent = formatNumber(total);
   $("throughput").innerHTML = `${mbps.toFixed(2)} <small>Mb/s</small>`;
   $("flow-count").textContent = formatNumber(stats.forwarded || 0);
@@ -74,14 +74,13 @@ function renderStats(stats, status) {
   $("throughput-change").textContent = stats.total_bytes ? `${formatNumber(stats.total_bytes)} bytes processed` : "Available during inspection";
   $("flow-change").textContent = "Forwarded packets";
   $("blocked-change").textContent = "Engine rule matches";
+  if (status === "completed" && mbps > 0) renderChart(Array(6).fill(mbps), "Average throughput · Mbps");
 }
 
 function updateAnalytics(stats) {
   apps.length = 0;
-  (stats.applications || []).forEach((app, index) => apps.push({ ...app, color: palette[index % palette.length] }));
+  (stats.applications || []).forEach((app, index) => apps.push({ ...app, color: palette[index % palette.length], name: app.name.replace(/^\|+\s*/, "") }));
   renderApps();
-  const values = (stats.applications || []).map((app) => app.count).filter(Boolean);
-  if (values.length) renderChart(values);
   const domainEvents = (stats.domains || []).slice(0, 12).map((item) => ({ at: "SNI", message: `${item.domain} → ${item.application}`, level: "info" }));
   if (domainEvents.length && (!$("event-list").textContent || $("event-list").textContent.includes("No engine events"))) renderEvents(domainEvents);
 }
