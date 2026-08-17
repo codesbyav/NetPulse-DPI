@@ -59,7 +59,11 @@ function renderRules() {
 }
 
 function renderEvents(events) {
-  $("event-list").innerHTML = events.slice().reverse().map((event) => `<li class="${event.level === "error" ? "blocked" : ""}"><time>${escapeHtml(event.at)}</time>${escapeHtml(event.message)}</li>`).join("") || "<li><time>Waiting</time>No engine events yet.</li>";
+  $("event-list").innerHTML = events.slice().reverse().map((event) => {
+    const raw = String(event.message || "");
+    const message = raw.startsWith("Output written to:") ? "Filtered capture generated successfully" : raw;
+    return `<li class="${event.level === "error" ? "blocked" : ""}"><time>${escapeHtml(event.at)}</time>${escapeHtml(message)}</li>`;
+  }).join("") || "<li><time>Waiting</time>No engine events yet.</li>";
 }
 
 function renderStats(stats, status) {
