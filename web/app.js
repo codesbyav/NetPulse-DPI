@@ -1,10 +1,4 @@
-const apps = [
-  { name: "HTTPS", value: 0, color: "#51e6d5" },
-  { name: "YouTube", value: 0, color: "#48a9ff" },
-  { name: "DNS", value: 0, color: "#8f7dff" },
-  { name: "Facebook", value: 0, color: "#ffbf69" },
-  { name: "Other", value: 100, color: "#2b4056" },
-];
+const apps = [];
 const rules = [
   { type: "domain", value: "youtube.com" },
   { type: "app", value: "BitTorrent" },
@@ -17,6 +11,7 @@ let startedAt = 0;
 const $ = (id) => document.getElementById(id);
 const formatNumber = (value) => new Intl.NumberFormat().format(Math.round(value || 0));
 const escapeHtml = (value) => String(value).replace(/[&<>"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
+const palette = ["#51e6d5", "#48a9ff", "#8f7dff", "#ffbf69", "#ff6b8a", "#79d36f", "#b98cff", "#6fd8ff"];
 
 function setEngineState(state, detail, status = "idle") {
   const card = document.querySelector(".scan-state");
@@ -29,7 +24,7 @@ function setEngineState(state, detail, status = "idle") {
 function renderChart(points = []) {
   const svg = $("traffic-chart");
   if (!points.length) {
-    svg.innerHTML = "<text x='360' y='108' text-anchor='middle' fill='#71899f' font-size='13'>Throughput is available while an inspection runs</text>";
+    svg.innerHTML = "<text x='360' y='108' text-anchor='middle' fill='#71899f' font-size='13'>Throughput data appears after an inspection</text>";
     return;
   }
   const width = 720, height = 220, pad = 8, max = Math.max(...points, 1) * 1.12;
@@ -41,11 +36,13 @@ function renderChart(points = []) {
 }
 
 function renderApps() {
-  $("app-legend").innerHTML = apps.map((app) => `<li><i style="background:${app.color}"></i><span>${app.name}</span><b>${app.value}%</b></li>`).join("");
-  const classified = 100 - apps.find((app) => app.name === "Other").value;
-  $("classified-percent").textContent = `${classified}%`;
+  const total = apps.reduce((sum, app) => sum + app.count, 0);
+  const normalized = total ? apps : [{ name: "No data", count: 0, percent: 100, color: "#2b4056" }];
+  $("app-legend").innerHTML = normalized.slice(0, 8).map((app, index) => `<li><i style="background:${app.color || palette[index % palette.length]}"></i><span>${escapeHtml(app.name)}</span><b>${app.percent.toFixed(1)}%</b></li>`).join("");
+  const classified = apps.filter((app) => app.name.toLowerCase() !== "unknown").reduce((sum, app) => sum + app.count, 0);
+  $("classified-percent").textContent = `${total ? Math.round(classified / total * 100) : 0}%`;
   let position = 0;
-  const segments = apps.map((app) => { const start = position; position += app.value; return `${app.color} ${start}% ${position}%`; });
+  const segments = normalized.map((app, index) => { const start = position; position += app.percent; return `${app.color || palette[index % palette.length]} ${start}% ${position}%`; });
   $("donut").style.background = `conic-gradient(${segments.join(",")})`;
 }
 
@@ -68,15 +65,25 @@ function renderEvents(events) {
 function renderStats(stats, status) {
   const elapsed = Math.max((Date.now() - startedAt) / 1000, 1);
   const total = stats.total_packets || 0;
-  const throughput = status === "running" ? ((stats.total_bytes || 0) * 8 / elapsed / 1_000_000).toFixed(2) : "—";
+  const mbps = status === "running" ? ((stats.total_bytes || 0) * 8 / elapsed / 1_000_000) : (stats.total_bytes ? (stats.total_bytes * 8 / Math.max(elapsed, 1) / 1_000_000) : 0);
   $("packet-count").textContent = formatNumber(total);
-  $("throughput").innerHTML = `${throughput} <small>Mb/s</small>`;
+  $("throughput").innerHTML = `${mbps.toFixed(2)} <small>Mb/s</small>`;
   $("flow-count").textContent = formatNumber(stats.forwarded || 0);
   $("blocked-count").textContent = formatNumber(stats.dropped || 0);
-  $("packet-change").textContent = status === "completed" ? "Engine report complete" : status === "running" ? "Engine processing capture" : "Ready to analyze";
-  $("throughput-change").textContent = status === "running" ? "Calculated from engine report" : "Available during inspection";
+  $("packet-change").textContent = status === "completed" ? `${formatNumber(stats.tcp_packets)} TCP · ${formatNumber(stats.udp_packets)} UDP` : status === "running" ? "Engine processing capture" : "Ready to analyze";
+  $("throughput-change").textContent = stats.total_bytes ? `${formatNumber(stats.total_bytes)} bytes processed` : "Available during inspection";
   $("flow-change").textContent = "Forwarded packets";
   $("blocked-change").textContent = "Engine rule matches";
+}
+
+function updateAnalytics(stats) {
+  apps.length = 0;
+  (stats.applications || []).forEach((app, index) => apps.push({ ...app, color: palette[index % palette.length] }));
+  renderApps();
+  const values = (stats.applications || []).map((app) => app.count).filter(Boolean);
+  if (values.length) renderChart(values);
+  const domainEvents = (stats.domains || []).slice(0, 12).map((item) => ({ at: "SNI", message: `${item.domain} → ${item.application}`, level: "info" }));
+  if (domainEvents.length && (!$("event-list").textContent || $("event-list").textContent.includes("No engine events"))) renderEvents(domainEvents);
 }
 
 async function pollJob() {
@@ -86,9 +93,10 @@ async function pollJob() {
     if (!response.ok) throw new Error(job.error || "Could not read inspection status.");
     renderEvents(job.events || []);
     renderStats(job.stats || {}, job.status);
+    updateAnalytics(job.stats || {});
     if (job.status === "completed") {
       clearInterval(pollTimer); pollTimer = null;
-      setEngineState("Inspection complete", "Filtered capture is ready");
+      setEngineState("Inspection complete", `${formatNumber(job.stats?.total_packets)} packets analyzed`);
       $("engine-state").textContent = "Ready";
       $("run-button").disabled = false;
       $("run-button").innerHTML = "<span>▶</span> Start inspection";
@@ -129,7 +137,7 @@ async function runInspection() {
     setEngineState("Inspection in progress", `${$("lb-count").value} load balancers · ${$("fp-count").value} fast paths each`, "running");
     $("engine-state").textContent = "Processing";
     $("run-button").innerHTML = "<span>◌</span> Inspection running";
-    renderChart([2, 5, 4, 7, 6, 9]);
+    renderChart();
     await pollJob();
     pollTimer = setInterval(pollJob, 800);
   } catch (error) {
@@ -150,6 +158,6 @@ $("rule-form").addEventListener("submit", (event) => {
   rules.unshift({ type: $("rule-type").value, value }); $("rule-value").value = ""; renderRules();
 });
 $("run-button").addEventListener("click", runInspection);
-$("refresh-traffic").addEventListener("click", () => renderApps());
+$("refresh-traffic").addEventListener("click", renderApps);
 setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }, 1000);
 renderChart(); renderApps(); renderRules(); renderEvents([]); renderStats({}, "idle");
