@@ -13,6 +13,13 @@ const formatNumber = (value) => new Intl.NumberFormat().format(Math.round(value 
 const escapeHtml = (value) => String(value).replace(/[&<>\"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
 const palette = ["#51e6d5", "#48a9ff", "#8f7dff", "#ffbf69", "#ff6b8a", "#79d36f", "#b98cff", "#6fd8ff"];
 
+function setActiveNav() {
+  const hash = location.hash || "#overview";
+  document.querySelectorAll(".nav-link").forEach((link) => {
+    link.classList.toggle("active", link.getAttribute("href") === hash);
+  });
+}
+
 function setEngineState(state, detail, status = "idle") {
   const card = document.querySelector(".scan-state");
   card.classList.toggle("running", status === "running");
@@ -66,10 +73,11 @@ function renderEvents(events) {
   }).join("") || "<li><time>Waiting</time>No engine events yet.</li>";
 }
 
-function renderStats(stats, status) {
-  const elapsed = Math.max((Date.now() - startedAt) / 1000, 1);
+function renderStats(stats, status, job = null) {
+  const clientElapsed = Math.max((Date.now() - startedAt) / 1000, 0.001);
+  const jobElapsed = job?.finished_at && job?.started_at ? Math.max(job.finished_at - job.started_at, 0.001) : clientElapsed;
   const total = stats.total_packets || 0;
-  const mbps = stats.total_bytes ? (stats.total_bytes * 8 / Math.max(elapsed, 1) / 1_000_000) : 0;
+  const mbps = stats.total_bytes ? (stats.total_bytes * 8 / (status === "completed" ? jobElapsed : clientElapsed) / 1_000_000) : 0;
   $("packet-count").textContent = formatNumber(total);
   $("throughput").innerHTML = `${mbps.toFixed(2)} <small>Mb/s</small>`;
   $("flow-count").textContent = formatNumber(stats.forwarded || 0);
@@ -88,8 +96,10 @@ function renderReport(job) {
   const domains = stats.domains || [];
   const threads = stats.threads || [];
   const totalBytes = stats.total_bytes || 0;
-  const elapsed = Math.max(((job.finished_at || Date.now()) - (job.started_at || Date.now())) / 1000, 0.001);
+  const elapsed = Math.max(((job.finished_at || Date.now()) - (job.started_at || Date.now())), 0.001);
   const mbps = totalBytes * 8 / elapsed / 1_000_000;
+  const captureName = $("pcap-file").files[0]?.name || "Uploaded capture";
+  const ruleCount = rules.length;
   $("report-status").textContent = `${formatNumber(stats.total_packets)} packets analyzed · report generated successfully`;
   $("report-download").href = job.output_url || "#";
   $("report-download").hidden = !job.output_url;
@@ -101,6 +111,13 @@ function renderReport(job) {
       <div><span>Forwarded</span><strong>${formatNumber(stats.forwarded)}</strong></div>
       <div><span>Blocked</span><strong>${formatNumber(stats.dropped)}</strong></div>
       <div><span>Avg. throughput</span><strong>${mbps.toFixed(2)} <small>Mb/s</small></strong></div>
+    </div>
+    <div class="report-details">
+      <div><span>Capture</span><b>${escapeHtml(captureName)}</b></div>
+      <div><span>Status</span><b class="report-ok">Completed</b></div>
+      <div><span>Load balancers</span><b>${escapeHtml($("lb-count").value)}</b></div>
+      <div><span>Fast paths / LB</span><b>${escapeHtml($("fp-count").value)}</b></div>
+      <div><span>Rules applied</span><b>${formatNumber(ruleCount)}</b></div>
     </div>
     <div class="report-columns">
       <div class="report-block"><h3>Application breakdown</h3>${appsReport.length ? `<div class="report-table">${appsReport.map((app) => `<div><span>${escapeHtml(app.name.replace(/^\|+\s*/, ""))}</span><b>${formatNumber(app.count)}</b><em>${app.percent.toFixed(1)}%</em></div>`).join("")}</div>` : `<p class="report-muted">No application classifications reported.</p>`}</div>
@@ -123,7 +140,7 @@ async function pollJob() {
     const job = await response.json();
     if (!response.ok) throw new Error(job.error || "Could not read inspection status.");
     renderEvents(job.events || []);
-    renderStats(job.stats || {}, job.status);
+    renderStats(job.stats || {}, job.status, job);
     updateAnalytics(job.stats || {});
     if (job.status === "completed") {
       clearInterval(pollTimer); pollTimer = null;
@@ -194,5 +211,7 @@ $("rule-form").addEventListener("submit", (event) => {
 });
 $("run-button").addEventListener("click", runInspection);
 $("refresh-traffic").addEventListener("click", renderApps);
+window.addEventListener("hashchange", setActiveNav);
+setActiveNav();
 setInterval(() => { $("clock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }, 1000);
 renderChart(); renderApps(); renderRules(); renderEvents([]); renderStats({}, "idle");
