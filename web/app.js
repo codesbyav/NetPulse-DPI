@@ -81,6 +81,34 @@ function renderStats(stats, status) {
   if (status === "completed" && mbps > 0) renderChart(Array(6).fill(mbps), "Average throughput · Mbps");
 }
 
+function renderReport(job) {
+  if (!job || job.status !== "completed") return;
+  const stats = job.stats || {};
+  const appsReport = (stats.applications || []).slice().sort((a, b) => b.count - a.count);
+  const domains = stats.domains || [];
+  const threads = stats.threads || [];
+  const totalBytes = stats.total_bytes || 0;
+  const elapsed = Math.max(((job.finished_at || Date.now()) - (job.started_at || Date.now())) / 1000, 0.001);
+  const mbps = totalBytes * 8 / elapsed / 1_000_000;
+  $("report-status").textContent = `${formatNumber(stats.total_packets)} packets analyzed · report generated successfully`;
+  $("report-download").href = job.output_url || "#";
+  $("report-download").hidden = !job.output_url;
+  $("report-content").innerHTML = `
+    <div class="report-summary-grid">
+      <div><span>Total packets</span><strong>${formatNumber(stats.total_packets)}</strong></div>
+      <div><span>Total bytes</span><strong>${formatNumber(totalBytes)}</strong></div>
+      <div><span>TCP / UDP</span><strong>${formatNumber(stats.tcp_packets)} / ${formatNumber(stats.udp_packets)}</strong></div>
+      <div><span>Forwarded</span><strong>${formatNumber(stats.forwarded)}</strong></div>
+      <div><span>Blocked</span><strong>${formatNumber(stats.dropped)}</strong></div>
+      <div><span>Avg. throughput</span><strong>${mbps.toFixed(2)} <small>Mb/s</small></strong></div>
+    </div>
+    <div class="report-columns">
+      <div class="report-block"><h3>Application breakdown</h3>${appsReport.length ? `<div class="report-table">${appsReport.map((app) => `<div><span>${escapeHtml(app.name.replace(/^\|+\s*/, ""))}</span><b>${formatNumber(app.count)}</b><em>${app.percent.toFixed(1)}%</em></div>`).join("")}</div>` : `<p class="report-muted">No application classifications reported.</p>`}</div>
+      <div class="report-block"><h3>Detected domains / SNI</h3>${domains.length ? `<div class="report-table">${domains.map((item) => `<div><span>${escapeHtml(item.domain)}</span><b>${escapeHtml(item.application)}</b></div>`).join("")}</div>` : `<p class="report-muted">No domains or SNI entries reported.</p>`}</div>
+    </div>
+    <div class="report-block"><h3>Thread statistics</h3>${threads.length ? `<div class="report-table">${threads.map((thread) => `<div><span>${escapeHtml(thread.name)}</span><b>${escapeHtml(thread.metric)}</b><em>${formatNumber(thread.value)}</em></div>`).join("")}</div>` : `<p class="report-muted">No thread-level statistics reported by this engine build.</p>`}</div>`;
+}
+
 function updateAnalytics(stats) {
   apps.length = 0;
   (stats.applications || []).forEach((app, index) => apps.push({ ...app, color: palette[index % palette.length], name: app.name.replace(/^\|+\s*/, "") }));
@@ -104,6 +132,7 @@ async function pollJob() {
       $("run-button").disabled = false;
       $("run-button").innerHTML = "<span>▶</span> Start inspection";
       $("output-link").href = job.output_url; $("output-link").hidden = false;
+      renderReport(job);
     } else if (job.status === "failed") {
       clearInterval(pollTimer); pollTimer = null;
       setEngineState("Inspection failed", job.error || "Check the engine log", "failed");
@@ -137,6 +166,9 @@ async function runInspection() {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Could not start inspection.");
     jobId = payload.id; startedAt = Date.now();
+    $("report-status").textContent = "Inspection running… report will appear when complete.";
+    $("report-content").innerHTML = "<div class='report-empty'>Analyzing the capture and collecting engine results…</div>";
+    $("report-download").hidden = true;
     setEngineState("Inspection in progress", `${$("lb-count").value} load balancers · ${$("fp-count").value} fast paths each`, "running");
     $("engine-state").textContent = "Processing";
     $("run-button").innerHTML = "<span>◌</span> Inspection running";
