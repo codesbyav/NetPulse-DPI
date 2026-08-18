@@ -102,10 +102,18 @@
             </form>
             <div class="rule-list" id="rule-list"></div>
           </article>
-          <article id="reports" class="panel event-panel">
+          <article class="panel event-panel">
             <div class="panel-heading"><div><p class="eyebrow">ACTIVITY</p><h2>Latest events</h2></div><span class="live-badge"><i></i> LIVE</span></div>
             <ol id="event-list" class="event-list"></ol>
           </article>
+        </section>
+
+        <section id="reports" class="panel reports-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">REPORT</p><h2>Inspection report</h2><p class="report-subtitle" id="report-status">Run an inspection to generate a report.</p></div>
+            <a id="report-download" class="secondary-button report-download" hidden>Download filtered PCAP</a>
+          </div>
+          <div id="report-content" class="report-empty">No inspection report available yet.</div>
         </section>
       </main>
     </div>
