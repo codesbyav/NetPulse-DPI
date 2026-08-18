@@ -13,6 +13,10 @@ const formatNumber = (value) => new Intl.NumberFormat().format(Math.round(value 
 const escapeHtml = (value) => String(value).replace(/[&<>\"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character]);
 const palette = ["#51e6d5", "#48a9ff", "#8f7dff", "#ffbf69", "#ff6b8a", "#79d36f", "#b98cff", "#6fd8ff"];
 
+const reportStyle = document.createElement("style");
+reportStyle.textContent = `.report-details{display:grid;grid-template-columns:repeat(5,1fr);gap:9px;margin-top:14px}.report-details>div{background:#081725;border:1px solid #1b354b;border-radius:8px;padding:11px 13px}.report-details span{display:block;color:#6f879d;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}.report-details b{font-size:11px;color:#e5f0f8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}.report-ok{color:#51e6d5!important}@media(max-width:1050px){.report-details{grid-template-columns:repeat(3,1fr)}}@media(max-width:650px){.report-details{grid-template-columns:1fr 1fr}}`;
+document.head.appendChild(reportStyle);
+
 function setActiveNav() {
   const hash = location.hash || "#overview";
   document.querySelectorAll(".nav-link").forEach((link) => {
