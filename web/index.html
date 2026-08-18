@@ -81,7 +81,7 @@
           <article class="panel traffic-panel">
             <div class="panel-heading"><div><p class="eyebrow">INSPECTION METRICS</p><h2>Average throughput</h2></div><span class="legend"><i></i> Mbps</span></div>
             <div class="chart-wrap"><svg id="traffic-chart" viewBox="0 0 720 220" role="img" aria-label="Average throughput chart"></svg></div>
-            <div class="chart-labels"><span>Measured</span><span>From engine report</span></div>
+            <div class="chart-labels"><span>Measured</span><span>From capture timestamps</span></div>
           </article>
           <article class="panel distribution-panel">
             <div class="panel-heading"><div><p class="eyebrow">CLASSIFICATION</p><h2>Application traffic</h2></div><button class="text-button" id="refresh-traffic">Refresh</button></div>
@@ -119,5 +119,6 @@
     </div>
     <template id="rule-template"><div class="rule"><span class="rule-kind"></span><span class="rule-value"></span><button aria-label="Remove rule">×</button></div></template>
     <script src="app.js"></script>
+    <script src="chart-fix.js"></script>
   </body>
 </html>
