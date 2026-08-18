@@ -22,9 +22,10 @@ RUNS_ROOT = ROOT / ".netpulse-runs"
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.RLock()
+BUILD_LOCK = threading.Lock()
 
 
-def engine_path() -> Path | None:
+def engine_candidates() -> list[Path]:
     configured = os.environ.get("NETPULSE_ENGINE")
     candidates = [Path(configured)] if configured else []
     if os.name == "nt":
@@ -35,7 +36,73 @@ def engine_path() -> Path | None:
         ])
     else:
         candidates.extend([ROOT / "build" / "dpi_engine", ROOT / "dpi_engine"])
-    return next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
+    return [candidate.resolve() for candidate in candidates]
+
+
+def engine_path() -> Path | None:
+    return next((candidate for candidate in engine_candidates() if candidate.is_file()), None)
+
+
+def engine_sources_changed(engine: Path) -> bool:
+    if not engine.exists():
+        return True
+    source_roots = [ROOT / "src", ROOT / "include"]
+    watched = [ROOT / "CMakeLists.txt"]
+    for root in source_roots:
+        if root.exists():
+            watched.extend(path for path in root.rglob("*") if path.suffix in {".cpp", ".h", ".hpp", ".cc", ".cxx"})
+    try:
+        engine_mtime = engine.stat().st_mtime
+        return any(path.is_file() and path.stat().st_mtime > engine_mtime for path in watched)
+    except OSError:
+        return True
+
+
+def ensure_engine_built() -> Path:
+    """Build the engine when it is missing or older than its source files."""
+    existing = engine_path()
+    if existing and not engine_sources_changed(existing):
+        return existing
+
+    with BUILD_LOCK:
+        existing = engine_path()
+        if existing and not engine_sources_changed(existing):
+            return existing
+
+        build_dir = ROOT / "build"
+        configure = ["cmake", "-S", str(ROOT), "-B", str(build_dir)]
+        build = ["cmake", "--build", str(build_dir), "--config", "Release", "--target", "dpi_engine"]
+        if os.name != "nt":
+            build = ["cmake", "--build", str(build_dir), "--target", "dpi_engine", "-j2"]
+
+        configure_result = subprocess.run(
+            configure,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if configure_result.returncode != 0:
+            detail = configure_result.stderr.strip() or configure_result.stdout.strip()
+            raise RuntimeError(f"CMake configure failed: {detail[-1200:]}")
+
+        build_result = subprocess.run(
+            build,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if build_result.returncode != 0:
+            detail = build_result.stderr.strip() or build_result.stdout.strip()
+            raise RuntimeError(f"Engine build failed: {detail[-1200:]}")
+
+        rebuilt = engine_path()
+        if not rebuilt:
+            raise RuntimeError("Build completed but dpi_engine was not found.")
+        return rebuilt
 
 
 def safe_file_name(value: str, fallback: str) -> str:
@@ -150,11 +217,9 @@ def parse_report(log: str) -> dict:
         for line in domain_section.group(1).splitlines():
             match = re.match(r"\s*-\s*(.*?)\s*->\s*(.*)\s*$", line)
             if match:
-                domain = match.group(1).strip()
-                application = match.group(2).strip()
                 stats["domains"].append({
-                    "domain": domain,
-                    "application": application,
+                    "domain": match.group(1).strip(),
+                    "application": match.group(2).strip(),
                 })
 
     return stats
@@ -223,13 +288,12 @@ class NetPulseHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-
         if parsed.path == "/api/health":
-            engine = engine_path()
-            self.send_json({
-                "engine_ready": bool(engine),
-                "engine_path": str(engine) if engine else None,
-            })
+            try:
+                engine = ensure_engine_built()
+                self.send_json({"engine_ready": True, "engine_path": str(engine)})
+            except Exception as error:
+                self.send_json({"engine_ready": False, "error": str(error)}, HTTPStatus.SERVICE_UNAVAILABLE)
             return
 
         match = re.fullmatch(r"/api/inspections/([a-f0-9-]+)(/output)?", parsed.path)
@@ -240,7 +304,6 @@ class NetPulseHandler(BaseHTTPRequestHandler):
             if not job:
                 self.send_json({"error": "Inspection not found"}, HTTPStatus.NOT_FOUND)
                 return
-
             if match.group(2):
                 output_file = Path(job["output_file"])
                 if not output_file.is_file():
@@ -249,10 +312,7 @@ class NetPulseHandler(BaseHTTPRequestHandler):
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "application/vnd.tcpdump.pcap")
                 self.send_header("Content-Length", str(output_file.stat().st_size))
-                self.send_header(
-                    "Content-Disposition",
-                    f'attachment; filename="{output_file.name}"',
-                )
+                self.send_header("Content-Disposition", f'attachment; filename="{output_file.name}"')
                 self.end_headers()
                 with output_file.open("rb") as stream:
                     shutil.copyfileobj(stream, self.wfile)
@@ -262,7 +322,6 @@ class NetPulseHandler(BaseHTTPRequestHandler):
                 job.pop("command", None)
                 self.send_json(job)
             return
-
         self.serve_static(parsed.path)
 
     def do_POST(self) -> None:  # noqa: N802
@@ -272,18 +331,13 @@ class NetPulseHandler(BaseHTTPRequestHandler):
 
         length = int(self.headers.get("Content-Length", "0"))
         if not 0 < length <= MAX_UPLOAD_BYTES:
-            self.send_json(
-                {"error": "Choose a PCAP file smaller than 512 MB."},
-                HTTPStatus.BAD_REQUEST,
-            )
+            self.send_json({"error": "Choose a PCAP file smaller than 512 MB."}, HTTPStatus.BAD_REQUEST)
             return
 
-        engine = engine_path()
-        if not engine:
-            self.send_json(
-                {"error": "dpi_engine was not found. Build it first with CMake or set NETPULSE_ENGINE."},
-                HTTPStatus.SERVICE_UNAVAILABLE,
-            )
+        try:
+            engine = ensure_engine_built()
+        except Exception as error:
+            self.send_json({"error": str(error)}, HTTPStatus.SERVICE_UNAVAILABLE)
             return
 
         try:
@@ -306,33 +360,17 @@ class NetPulseHandler(BaseHTTPRequestHandler):
         run_dir = RUNS_ROOT / job_id
         run_dir.mkdir(parents=True, exist_ok=True)
         input_file = run_dir / safe_file_name(uploaded_name, "capture.pcap")
-        output_file = run_dir / safe_file_name(
-            field_text(fields, "output_name", "filtered-output.pcap"),
-            "filtered-output.pcap",
-        )
+        output_file = run_dir / safe_file_name(field_text(fields, "output_name", "filtered-output.pcap"), "filtered-output.pcap")
         if output_file.suffix.lower() != ".pcap":
             output_file = output_file.with_suffix(".pcap")
 
         input_file.write_bytes(capture)
-        command = [
-            str(engine),
-            str(input_file),
-            str(output_file),
-            "--lbs",
-            str(lbs),
-            "--fps",
-            str(fps),
-        ]
-
+        command = [str(engine), str(input_file), str(output_file), "--lbs", str(lbs), "--fps", str(fps)]
         for rule in rules:
             if not isinstance(rule, dict):
                 continue
             value = str(rule.get("value", "")).strip()
-            flag = {
-                "domain": "--block-domain",
-                "ip": "--block-ip",
-                "app": "--block-app",
-            }.get(rule.get("type"))
+            flag = {"domain": "--block-domain", "ip": "--block-ip", "app": "--block-app"}.get(rule.get("type"))
             if flag and value:
                 command.extend((flag, value))
 
@@ -348,15 +386,12 @@ class NetPulseHandler(BaseHTTPRequestHandler):
                 "log": "",
                 "output_file": str(output_file),
                 "command": command,
+                "config": {"lbs": lbs, "fps_per_lb": fps, "total_fps": lbs * fps},
             }
 
-        thread = threading.Thread(
-            target=run_engine,
-            args=(job_id, command, output_file),
-            daemon=True,
-        )
+        thread = threading.Thread(target=run_engine, args=(job_id, command, output_file), daemon=True)
         thread.start()
-        self.send_json({"id": job_id, "status": "queued"}, HTTPStatus.ACCEPTED)
+        self.send_json({"id": job_id, "status": "queued", "config": {"lbs": lbs, "fps_per_lb": fps, "total_fps": lbs * fps}}, HTTPStatus.ACCEPTED)
 
     def serve_static(self, request_path: str) -> None:
         relative = unquote(request_path.lstrip("/")) or "index.html"
@@ -382,5 +417,8 @@ if __name__ == "__main__":
     RUNS_ROOT.mkdir(exist_ok=True)
     address = ("127.0.0.1", int(os.environ.get("NETPULSE_PORT", "8765")))
     print(f"NetPulse UI: http://{address[0]}:{address[1]}")
-    print("Engine:", engine_path() or "not built (run CMake first)")
+    try:
+        print("Engine:", ensure_engine_built())
+    except Exception as error:
+        print("Engine build error:", error)
     ThreadingHTTPServer(address, NetPulseHandler).serve_forever()
