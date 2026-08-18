@@ -8,8 +8,6 @@ namespace DPI {
 
 std::string FiveTuple::toString() const {
     std::ostringstream ss;
-    
-    // Format IP addresses
     auto formatIP = [](uint32_t ip) {
         std::ostringstream s;
         s << ((ip >> 0) & 0xFF) << "."
@@ -18,12 +16,9 @@ std::string FiveTuple::toString() const {
           << ((ip >> 24) & 0xFF);
         return s.str();
     };
-    
     ss << formatIP(src_ip) << ":" << src_port
-       << " -> "
-       << formatIP(dst_ip) << ":" << dst_port
+       << " -> " << formatIP(dst_ip) << ":" << dst_port
        << " (" << (protocol == 6 ? "TCP" : protocol == 17 ? "UDP" : "?") << ")";
-    
     return ss.str();
 }
 
@@ -56,140 +51,107 @@ std::string appTypeToString(AppType type) {
     }
 }
 
-// Map SNI/domain to application type
 AppType sniToAppType(const std::string& sni) {
     if (sni.empty()) return AppType::UNKNOWN;
-    
-    // Convert to lowercase for matching
-    std::string lower_sni = sni;
-    std::transform(lower_sni.begin(), lower_sni.end(), lower_sni.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    
-    // Check for known patterns
-    // Google (including YouTube, which is owned by Google)
-    if (lower_sni.find("google") != std::string::npos ||
-        lower_sni.find("gstatic") != std::string::npos ||
-        lower_sni.find("googleapis") != std::string::npos ||
-        lower_sni.find("ggpht") != std::string::npos ||
-        lower_sni.find("gvt1") != std::string::npos) {
-        return AppType::GOOGLE;
-    }
-    
-    // YouTube
-    if (lower_sni.find("youtube") != std::string::npos ||
-        lower_sni.find("ytimg") != std::string::npos ||
-        lower_sni.find("youtu.be") != std::string::npos ||
-        lower_sni.find("yt3.ggpht") != std::string::npos) {
+
+    std::string host = sni;
+    std::transform(host.begin(), host.end(), host.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    // Match host/domain labels rather than arbitrary substrings. This prevents
+    // collisions such as "netflix.com" matching Twitter because "netflix.com"
+    // contains the substring "x.com".
+    auto hasToken = [&host](const std::string& token) {
+        if (host == token) return true;
+        if (host.size() > token.size() &&
+            host.compare(host.size() - token.size(), token.size(), token) == 0 &&
+            host[host.size() - token.size() - 1] == '.') return true;
+        return host.find("." + token + ".") != std::string::npos;
+    };
+
+    auto hasSubstring = [&host](const std::string& token) {
+        return host.find(token) != std::string::npos;
+    };
+
+    // Specific applications first; broad provider patterns come later.
+    if (hasToken("youtube.com") || hasToken("youtube-nocookie.com") ||
+        hasToken("youtu.be") || hasSubstring("ytimg") || hasSubstring("yt3.ggpht")) {
         return AppType::YOUTUBE;
     }
-    
-    // Facebook/Meta
-    if (lower_sni.find("facebook") != std::string::npos ||
-        lower_sni.find("fbcdn") != std::string::npos ||
-        lower_sni.find("fb.com") != std::string::npos ||
-        lower_sni.find("fbsbx") != std::string::npos ||
-        lower_sni.find("meta.com") != std::string::npos) {
+
+    if (hasToken("facebook.com") || hasToken("fb.com") ||
+        hasSubstring("fbcdn") || hasSubstring("fbsbx") || hasToken("meta.com")) {
         return AppType::FACEBOOK;
     }
-    
-    // Instagram (owned by Meta)
-    if (lower_sni.find("instagram") != std::string::npos ||
-        lower_sni.find("cdninstagram") != std::string::npos) {
+
+    if (hasToken("instagram.com") || hasSubstring("cdninstagram")) {
         return AppType::INSTAGRAM;
     }
-    
-    // WhatsApp (owned by Meta)
-    if (lower_sni.find("whatsapp") != std::string::npos ||
-        lower_sni.find("wa.me") != std::string::npos) {
+
+    if (hasToken("whatsapp.com") || hasToken("whatsapp.net") || hasToken("wa.me")) {
         return AppType::WHATSAPP;
     }
-    
-    // Twitter/X
-    if (lower_sni.find("twitter") != std::string::npos ||
-        lower_sni.find("twimg") != std::string::npos ||
-        lower_sni.find("x.com") != std::string::npos ||
-        lower_sni.find("t.co") != std::string::npos) {
+
+    if (hasToken("twitter.com") || hasToken("x.com") || hasToken("t.co") ||
+        hasSubstring("twimg")) {
         return AppType::TWITTER;
     }
-    
-    // Netflix
-    if (lower_sni.find("netflix") != std::string::npos ||
-        lower_sni.find("nflxvideo") != std::string::npos ||
-        lower_sni.find("nflximg") != std::string::npos) {
+
+    if (hasToken("netflix.com") || hasSubstring("nflxvideo") || hasSubstring("nflximg")) {
         return AppType::NETFLIX;
     }
-    
-    // Amazon
-    if (lower_sni.find("amazon") != std::string::npos ||
-        lower_sni.find("amazonaws") != std::string::npos ||
-        lower_sni.find("cloudfront") != std::string::npos ||
-        lower_sni.find("aws") != std::string::npos) {
+
+    if (hasToken("amazon.com") || hasToken("amazonaws.com") ||
+        hasSubstring("cloudfront") || hasSubstring("amazonaws")) {
         return AppType::AMAZON;
     }
-    
-    // Microsoft
-    if (lower_sni.find("microsoft") != std::string::npos ||
-        lower_sni.find("msn.com") != std::string::npos ||
-        lower_sni.find("office") != std::string::npos ||
-        lower_sni.find("azure") != std::string::npos ||
-        lower_sni.find("live.com") != std::string::npos ||
-        lower_sni.find("outlook") != std::string::npos ||
-        lower_sni.find("bing") != std::string::npos) {
+
+    if (hasToken("microsoft.com") || hasToken("msn.com") || hasSubstring("office") ||
+        hasSubstring("azure") || hasToken("live.com") || hasSubstring("outlook") ||
+        hasToken("bing.com")) {
         return AppType::MICROSOFT;
     }
-    
-    // Apple
-    if (lower_sni.find("apple") != std::string::npos ||
-        lower_sni.find("icloud") != std::string::npos ||
-        lower_sni.find("mzstatic") != std::string::npos ||
-        lower_sni.find("itunes") != std::string::npos) {
+
+    if (hasToken("apple.com") || hasToken("icloud.com") || hasSubstring("mzstatic") ||
+        hasSubstring("itunes")) {
         return AppType::APPLE;
     }
-    
-    // Telegram
-    if (lower_sni.find("telegram") != std::string::npos ||
-        lower_sni.find("t.me") != std::string::npos) {
+
+    if (hasToken("telegram.org") || hasToken("t.me") || hasSubstring("telegram")) {
         return AppType::TELEGRAM;
     }
-    
-    // TikTok
-    if (lower_sni.find("tiktok") != std::string::npos ||
-        lower_sni.find("tiktokcdn") != std::string::npos ||
-        lower_sni.find("musical.ly") != std::string::npos ||
-        lower_sni.find("bytedance") != std::string::npos) {
+
+    if (hasToken("tiktok.com") || hasSubstring("tiktokcdn") ||
+        hasToken("musical.ly") || hasSubstring("bytedance")) {
         return AppType::TIKTOK;
     }
-    
-    // Spotify
-    if (lower_sni.find("spotify") != std::string::npos ||
-        lower_sni.find("scdn.co") != std::string::npos) {
+
+    if (hasToken("spotify.com") || hasSubstring("scdn.co")) {
         return AppType::SPOTIFY;
     }
-    
-    // Zoom
-    if (lower_sni.find("zoom") != std::string::npos) {
+
+    if (hasToken("zoom.us") || hasSubstring("zoom")) {
         return AppType::ZOOM;
     }
-    
-    // Discord
-    if (lower_sni.find("discord") != std::string::npos ||
-        lower_sni.find("discordapp") != std::string::npos) {
+
+    if (hasToken("discord.com") || hasSubstring("discordapp")) {
         return AppType::DISCORD;
     }
-    
-    // GitHub
-    if (lower_sni.find("github") != std::string::npos ||
-        lower_sni.find("githubusercontent") != std::string::npos) {
+
+    if (hasToken("github.com") || hasSubstring("githubusercontent")) {
         return AppType::GITHUB;
     }
-    
-    // Cloudflare
-    if (lower_sni.find("cloudflare") != std::string::npos ||
-        lower_sni.find("cf-") != std::string::npos) {
+
+    if (hasToken("cloudflare.com") || hasSubstring("cloudflare")) {
         return AppType::CLOUDFLARE;
     }
-    
-    // If SNI is present but not recognized, still mark as TLS/HTTPS
+
+    // Google provider patterns are intentionally after the app-specific rules.
+    if (hasToken("google.com") || hasSubstring("gstatic") ||
+        hasSubstring("googleapis") || hasSubstring("ggpht") || hasSubstring("gvt1")) {
+        return AppType::GOOGLE;
+    }
+
     return AppType::HTTPS;
 }
 
